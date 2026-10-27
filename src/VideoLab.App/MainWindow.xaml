@@ -15,7 +15,7 @@
         <InfoBar x:Name="Notice" IsOpen="False" IsClosable="True" Margin="24,0,24,8" />
         <Grid Grid.Row="1" ColumnSpacing="16">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="LogColumn" Width="0"/></Grid.ColumnDefinitions>
-          <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" Padding="28,16,28,28">
+          <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top" Padding="28,16,28,28">
             <Grid x:Name="PageHost" MaxWidth="1180" HorizontalAlignment="Stretch" />
           </ScrollViewer>
           <Border Grid.Column="1" Padding="16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">

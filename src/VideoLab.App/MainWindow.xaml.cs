@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent(); ExtendsContentIntoTitleBar = true; SetTitleBar(TitleBar);
+        PageScroll.SizeChanged += (_, _) => UpdatePageWidth();
         AppWindow.Resize(new(1280, 900)); Model = new();
         LogList.ItemsSource = Model.Studio.Queue.Logs;
         Model.Studio.Queue.Updated += RefreshStatus;
@@ -55,6 +56,7 @@ public sealed partial class MainWindow : Window
                     }
                     if (Environment.GetCommandLineArgs().Contains("--capture-ui")) { await Task.Delay(200); await CaptureAsync(route); }
                 }
+                if (Environment.GetCommandLineArgs().Contains("--capture-ui") || Environment.GetCommandLineArgs().Contains("--layout-probe")) await VerifyPageLayoutsAsync();
                 if (Environment.GetCommandLineArgs().Contains("--capture-ui")) { ApplyTheme("light"); await NavigateAsync("convert"); await Task.Delay(250); await CaptureAsync("convert-light"); }
                 if (Environment.GetCommandLineArgs().Contains("--capture-ui"))
                 {
@@ -72,6 +74,64 @@ public sealed partial class MainWindow : Window
             if (Environment.GetCommandLineArgs().Contains("--smoke-test")) { Directory.CreateDirectory(Model.Studio.Settings.Root); await File.WriteAllTextAsync(Path.Combine(Model.Studio.Settings.Root, "smoke-error.log"), error.ToString()); Environment.ExitCode = 1; allowClose = true; Close(); }
         }
     }
+
+    private void UpdatePageWidth()
+    {
+        // Give the presenter a measured width, not just MaxWidth: WinUI can
+        // otherwise center using the smaller intrinsic content width and then
+        // stretch the page beyond the right edge when the viewport is wide.
+        var available = Math.Max(0, PageScroll.ActualWidth - PageScroll.Padding.Left - PageScroll.Padding.Right);
+        PageHost.Width = Math.Min(PageHost.MaxWidth, available);
+    }
+
+    private async Task VerifyPageLayoutsAsync()
+    {
+        var samples = new List<object>(); var failures = new List<string>();
+        var routes = new[] { "convert", "audio", "compress", "trim", "expert", "image", "utilities", "extensions", "download", "settings", "tasks", "about" };
+        foreach (var size in new[] { new Windows.Graphics.SizeInt32(900, 720), new Windows.Graphics.SizeInt32(1280, 900), new Windows.Graphics.SizeInt32(1920, 1080), new Windows.Graphics.SizeInt32(2560, 1380) })
+        {
+            AppWindow.Resize(size); await Task.Delay(200);
+            foreach (var route in routes)
+            {
+                await NavigateAsync(route); await Task.Delay(50); Root.UpdateLayout();
+                void Check(string state)
+                {
+                    var viewport = PageScroll.TransformToVisual(Root).TransformPoint(new(0, 0));
+                    var host = PageHost.TransformToVisual(Root).TransformPoint(new(0, 0));
+                    var left = viewport.X + PageScroll.Padding.Left; var right = viewport.X + PageScroll.ActualWidth - PageScroll.Padding.Right;
+                    if (host.X < left - 1 || host.X + PageHost.ActualWidth > right + 1 || PageHost.ActualWidth > PageHost.MaxWidth + 1)
+                        failures.Add($"{route}/{state}/{size.Width}: page [{host.X:F1}, {host.X + PageHost.ActualWidth:F1}] outside viewport [{left:F1}, {right:F1}]");
+                    foreach (var control in Descendants(PageHost).OfType<FrameworkElement>().Where(e => (e is TextBox or ComboBox or Expander) && e.ActualWidth > 0))
+                    {
+                        bool visible = true;
+                        for (DependencyObject? ancestor = control; ancestor is not null && !ReferenceEquals(ancestor, PageHost); ancestor = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(ancestor))
+                            if (ancestor is UIElement { Visibility: Visibility.Collapsed }) { visible = false; break; }
+                        if (!visible) continue;
+                        var point = control.TransformToVisual(Root).TransformPoint(new(0, 0));
+                        if (point.X < left - 1 || point.X + control.ActualWidth > right + 1)
+                            failures.Add($"{route}/{state}/{size.Width}: {control.GetType().Name} outside viewport");
+                    }
+                    samples.Add(new { route, state, window = size.Width, viewportLeft = left, viewportRight = right, pageLeft = host.X, pageRight = host.X + PageHost.ActualWidth });
+                }
+                Check("normal");
+                if (route == "download")
+                {
+                    var expanders = Descendants(PageHost).OfType<Expander>().ToArray(); foreach (var expander in expanders) expander.IsExpanded = true;
+                    var links = Descendants(PageHost).OfType<TextBox>().First(e => e.Header?.ToString()?.StartsWith("媒体链接") == true);
+                    links.Text = "https://example.com/" + new string('x', 512);
+                    await Task.Delay(400); Root.UpdateLayout(); Check("expanded-long-link");
+                    if (Environment.GetCommandLineArgs().Contains("--capture-ui")) await CaptureAsync("download-expanded-" + size.Width);
+                    foreach (var expander in expanders) expander.IsExpanded = false; links.Text = ""; PageScroll.ChangeView(0, 0, null);
+                    await Task.Delay(400); Root.UpdateLayout();
+                    if (Environment.GetCommandLineArgs().Contains("--capture-ui")) await CaptureAsync("download-fixed-" + size.Width);
+                }
+            }
+        }
+        var report = new { cases = samples.Count, failures, samples };
+        await File.WriteAllTextAsync(Path.Combine(Model.Studio.Settings.Root, "layout-report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        if (failures.Count > 0) throw new InvalidOperationException("页面宽度验证失败：" + string.Join("; ", failures.Take(8)));
+    }
+
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
     {
         for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent); i++)

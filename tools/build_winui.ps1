@@ -45,7 +45,7 @@ try {
         }
         if ($Task -eq 'Package') {
             $distPath = Join-Path $projectRoot 'dist'; New-Item -ItemType Directory -Path $distPath -Force | Out-Null
-            $archivePath = Join-Path $distPath 'VideoLab-v26.10.27-winui.1+8-windows-x64.zip'
+            $archivePath = Join-Path $distPath 'VideoLab-v26.10.27-winui.2+9-windows-x64.zip'
             Compress-Archive -Path (Join-Path $publishPath '*') -DestinationPath $archivePath -Force
             $digest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -LiteralPath "$archivePath.sha256" -Value "$digest  $([IO.Path]::GetFileName($archivePath))"

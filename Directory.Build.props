@@ -8,7 +8,7 @@
     <Deterministic>true</Deterministic>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Version>26.10.27</Version>
-    <InformationalVersion>26.10.27-winui.1+8</InformationalVersion>
+    <InformationalVersion>26.10.27-winui.2+9</InformationalVersion>
     <UseSharedCompilation>false</UseSharedCompilation>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
