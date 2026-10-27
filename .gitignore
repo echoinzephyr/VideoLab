@@ -1,0 +1,14 @@
+/build/
+/dist/
+.vs/
+.idea/
+**/__pycache__/
+*.log
+*.seed
+*.tmp
+.env
+.env.*
+**/cookies*.txt
+**/cookie_custom_*.txt
+/assets/extensions/generated/*.vdx
+/assets/extensions/generated/index.json

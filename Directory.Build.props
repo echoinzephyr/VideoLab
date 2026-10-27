@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <VideoLabRoot>$(MSBuildThisFileDirectory)</VideoLabRoot>
+    <BaseIntermediateOutputPath>$(VideoLabRoot)build/dotnet/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(VideoLabRoot)build/dotnet/bin/$(MSBuildProjectName)/</BaseOutputPath>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>26.10.27</Version>
+    <InformationalVersion>26.10.27-winui.1+8</InformationalVersion>
+    <UseSharedCompilation>false</UseSharedCompilation>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+</Project>

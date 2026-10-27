@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="src/">
+    <Project Path="src/VideoLab.App/VideoLab.App.csproj" />
+    <Project Path="src/VideoLab.Core/VideoLab.Core.csproj" />
+    <Project Path="src/VideoLab.Interop/VideoLab.Interop.csproj" />
+    <Project Path="src/VideoLab.PluginWorker/VideoLab.PluginWorker.csproj" />
+    <Project Path="src/VideoLab.Packaging/VideoLab.Packaging.csproj" />
+  </Folder>
+  <Folder Name="tests/">
+    <Project Path="tests/VideoLab.Tests/VideoLab.Tests.csproj" />
+  </Folder>
+</Solution>
