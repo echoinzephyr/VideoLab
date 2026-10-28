@@ -106,7 +106,9 @@ public sealed class PluginManager
             var plugin = Store.Installed[id]; await Store.VerifyAsync(id); var configuration = await ConfigurationAsync(plugin);
             foreach (var field in plugin.Manifest.Fields)
                 if (field!["required"]?.GetValue<bool>() == true && string.IsNullOrWhiteSpace(inputs[field["id"]!.GetValue<string>()]?.ToString())) throw new InvalidDataException($"请填写 {field["label"] ?? field["id"]}。");
+            onEvent?.Invoke("log", new() { ["message"] = "正在检查扩展的配置与依赖。" });
             var checks = await CheckDependenciesAsync(plugin, configuration, token);
+            foreach (var check in checks) onEvent?.Invoke("log", new() { ["message"] = $"{check.Key}：{check.Value}" });
             var failures = checks.Where(p => !p.Value.StartsWith("已就绪") && p.Value != "已连接" && p.Value != "未配置（可选）").ToArray();
             if (failures.Length > 0) throw new InvalidOperationException("请修复配置与依赖：" + string.Join("；", failures.Select(p => $"{p.Key}：{p.Value}")));
             token.ThrowIfCancellationRequested();
@@ -114,6 +116,7 @@ public sealed class PluginManager
             var request = new JsonObject { ["inputs"] = inputs.DeepClone(), ["settings"] = configuration.DeepClone(), ["dependencies"] = dependencies, ["outputDirectory"] = directory };
             if (Store.IsOfficial(plugin) && UpdateService.CompareVersions(plugin.Manifest.Version, "1.1.0") < 0)
             { foreach (var p in inputs) request[p.Key] = p.Value?.DeepClone(); foreach (var p in configuration) request[p.Key] = p.Value?.DeepClone(); }
+            onEvent?.Invoke("log", new() { ["message"] = "正在启动扩展：" + plugin.Manifest.Name });
             await using var runtime = await PluginRuntime.StartAsync(plugin.Executable, plugin.Directory, token);
             runtime.Event += onEvent;
             try

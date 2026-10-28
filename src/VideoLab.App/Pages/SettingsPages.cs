@@ -83,6 +83,7 @@ internal sealed partial class StudioPages
         WorkItem? selected = null; System.ComponentModel.PropertyChangedEventHandler changed = (_, _) => window.DispatcherQueue.TryEnqueue(ShowItem);
         list.SelectionChanged += (_, _) => { if (selected is not null) selected.PropertyChanged -= changed; selected = list.SelectedItem as WorkItem; if (selected is not null) selected.PropertyChanged += changed; ShowItem(); };
         root.Children.Add(Card("处理队列", list, Row(form.Button("取消所选", () => { if (list.SelectedItem is WorkItem item && !item.Finished) item.Cancellation.Cancel(); return Task.CompletedTask; }), form.Button("取消全部", () => { studio.Queue.CancelAll(); return Task.CompletedTask; }), form.Button("复制全部日志", () => { MainWindow.Copy(string.Join(Environment.NewLine, studio.Queue.Logs)); return Task.CompletedTask; }))));
-        root.Children.Add(Card("输出与诊断", details)); return root;
+        root.Children.Add(Card("输出与诊断", details));
+        root.Children.Add(Card("实时日志", new ListView { ItemsSource = studio.Queue.Logs, SelectionMode = ListViewSelectionMode.None, MaxHeight = 320 })); return root;
     }
 }

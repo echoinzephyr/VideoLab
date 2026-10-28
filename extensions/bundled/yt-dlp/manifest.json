@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1, "protocolVersion": 1, "hostApiVersion": 1,
   "id": "yt-dlp", "name": "yt-dlp 网络下载", "publisher": "VideoLab",
-  "version": "1.2.0", "platform": "windows-x64", "entrypoint": "bin/plugin.exe",
+  "version": "1.2.1", "platform": "windows-x64", "entrypoint": "bin/plugin.exe",
   "renderer": "yt-dlp", "description": "网络视频下载、批量链接、画质选择、Aria2 加速与 Cookie 管理。",
   "permissions": ["访问互联网", "读写下载目录", "读取用户选择的 Cookie 和浏览器登录信息", "运行 yt-dlp、FFmpeg 和可选 Aria2"],
   "fields": [], "settings": [],
