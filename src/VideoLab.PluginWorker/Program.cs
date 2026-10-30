@@ -69,18 +69,30 @@ internal static class Program
         if (executable.Length == 0 || inputs["arguments"] is not JsonArray arguments) throw new InvalidDataException("缺少 yt-dlp 路径或参数。");
         using var process = new Process { StartInfo = new(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 } };
         foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument!.GetValue<string>());
+        Event("log", new() { ["message"] = "正在启动 yt-dlp 下载器。" });
         token.ThrowIfCancellationRequested(); process.Start();
         using var cancel = token.Register(() => { try { process.Kill(true); } catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception) { } });
         var diagnostic = new StringBuilder(); var valuesLock = new object();
         async Task ReadAsync(StreamReader reader)
         {
-            char[] buffer = new char[4096]; var line = new StringBuilder(); int count;
-            while ((count = await reader.ReadAsync(buffer, token)) > 0)
-                for (int i = 0; i < count; i++)
-                    if (buffer[i] == '\n') { Consume(line.ToString().TrimEnd('\r')); line.Clear(); }
-                    else { if (line.Length >= 65536) throw new InvalidDataException("下载器输出行过长。"); line.Append(buffer[i]); }
-            if (line.Length > 0) Consume(line.ToString());
+            try
+            {
+                char[] buffer = new char[4096]; var line = new StringBuilder(); int count;
+                while ((count = await reader.ReadAsync(buffer, token)) > 0)
+                    for (int i = 0; i < count; i++)
+                        if (buffer[i] == '\n') { Consume(line.ToString().TrimEnd('\r')); line.Clear(); }
+                        else { if (line.Length >= 65536) throw new InvalidDataException("下载器输出行过长。"); line.Append(buffer[i]); }
+                if (line.Length > 0) Consume(line.ToString());
+            }
+            catch
+            {
+                // A failed reader must stop the child before waiting for its exit:
+                // otherwise a full redirected pipe can block the downloader forever.
+                try { process.Kill(true); } catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+                throw;
+            }
         }
+        static double? Number(JsonNode? node) => node is JsonValue value && value.TryGetValue<double>(out var number) && double.IsFinite(number) && number >= 0 ? number : null;
         void Consume(string line)
         {
             if (line.StartsWith("__VIDEOADER_OUTPUT__:"))
@@ -89,8 +101,13 @@ internal static class Program
             {
                 try
                 {
-                    var value = JsonNode.Parse(line["__VIDEOADER_PROGRESS__:".Length..])!.AsObject(); var total = value["total_bytes"]?.GetValue<double>() ?? value["total_bytes_estimate"]?.GetValue<double>(); var downloaded = value["downloaded_bytes"]?.GetValue<double>();
-                    Event("progress", new() { ["fraction"] = total > 0 && downloaded is not null ? Math.Clamp(downloaded.Value / total.Value, 0, 1) : null, ["message"] = value["status"]?.ToString() == "finished" ? "当前流下载完成，正在处理" : "正在下载", ["speed"] = value["speed"] is null ? "" : $"{value["speed"]} B/s", ["eta"] = value["eta"] is null ? "" : $"{value["eta"]}s" }); return;
+                    if (JsonNode.Parse(line["__VIDEOADER_PROGRESS__:".Length..]) is JsonObject value)
+                    {
+                        // yt-dlp emits the JSON string "NA" for unavailable fields.
+                        var total = Number(value["total_bytes"]); if (total is not > 0) total = Number(value["total_bytes_estimate"]);
+                        var downloaded = Number(value["downloaded_bytes"]); var speed = Number(value["speed"]); var eta = Number(value["eta"]);
+                        Event("progress", new() { ["fraction"] = total > 0 && downloaded is not null ? Math.Clamp(downloaded.Value / total.Value, 0, 1) : null, ["message"] = value["status"]?.ToString() == "finished" ? "当前流下载完成，正在处理" : "正在下载", ["speed"] = speed is null ? "" : $"{speed} B/s", ["eta"] = eta is null ? "" : $"{eta}s" }); return;
+                    }
                 }
                 catch (JsonException) { }
             }

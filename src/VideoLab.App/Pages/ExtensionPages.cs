@@ -40,10 +40,10 @@ internal sealed partial class StudioPages
                     form.Button("打开", () => window.NavigateAsync(id == "yt-dlp" ? "download" : "plugin:" + id)),
                     form.Button("配置与依赖", () => studio.Plugins.Store.IsOfficial(plugin) ? window.NavigateToSettingsAsync("tools") : window.NavigateAsync("config:" + id))), management));
             }
-            foreach (var bundled in studio.Plugins.Bundled.Where(p => !studio.Plugins.Store.Installed.ContainsKey(p!["manifest"]!["id"]!.GetValue<string>())))
+            foreach (var bundled in studio.Plugins.Bundled.Where(p => !studio.Plugins.Store.Installed.TryGetValue(p!["manifest"]!["id"]!.GetValue<string>(), out var installed) || UpdateService.CompareVersions(p["manifest"]!["version"]!.GetValue<string>(), installed.Manifest.Version) > 0))
             {
                 var id = bundled!["manifest"]!["id"]!.GetValue<string>();
-                catalogPanel.Children.Add(Card(bundled["manifest"]!["name"]!.GetValue<string>(), Note("随附签名插件 · 可离线安装"), form.Button("安装", async () => { await studio.Plugins.InstallBundledAsync(id); await RefreshAsync(); })));
+                catalogPanel.Children.Add(Card(bundled["manifest"]!["name"]!.GetValue<string>() + " · " + bundled["manifest"]!["version"]!.GetValue<string>(), Note("随附签名插件 · 可离线安装或更新"), form.Button(studio.Plugins.Store.Installed.ContainsKey(id) ? "更新" : "安装", async () => { await studio.Plugins.InstallBundledAsync(id); await RefreshAsync(); })));
             }
             foreach (var item in studio.Plugins.Catalog)
             {

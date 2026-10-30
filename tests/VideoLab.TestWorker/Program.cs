@@ -13,9 +13,29 @@ if (args.FirstOrDefault() is "--version" or "-version" or "-hide_banner")
     if (args.FirstOrDefault() == "-hide_banner") { Console.WriteLine(mode == "no-encoders" ? "Encoders:\n V..... = Video\n A..... = Audio" : " V..... fixture Fixture encoder"); return; }
     Console.WriteLine(name == "ffmpeg" ? "ffmpeg version " + (mode.Length == 0 || mode == "no-encoders" ? "N-123-gabc" : mode) : name == "ffprobe" ? "ffprobe version 7.1" : "VideoLab fixture 1.0"); return;
 }
+if (args.FirstOrDefault() == "--fixture-overlong")
+{
+    while (true) { Console.Write(new string('x', 8192)); Console.Out.Flush(); }
+}
 if (args.FirstOrDefault() == "--fixture-output")
 {
-    await File.WriteAllBytesAsync(args[1], [1, 2, 3, 4]); Console.WriteLine("__VIDEOADER_PROGRESS__:{\"status\":\"downloading\",\"downloaded_bytes\":5,\"total_bytes\":10,\"speed\":1024,\"eta\":1}"); Console.WriteLine("__VIDEOADER_OUTPUT__:" + System.Text.Json.JsonSerializer.Serialize(args[1])); return;
+    var progress = args.ElementAtOrDefault(2) switch
+    {
+        "estimated" => "{\"downloaded_bytes\":5,\"total_bytes\":\"NA\",\"total_bytes_estimate\":20,\"speed\":\"NA\",\"eta\":\"NA\"}",
+        "unknown" => "{\"downloaded_bytes\":\"NA\",\"total_bytes\":\"NA\",\"total_bytes_estimate\":\"NA\",\"speed\":\"NA\",\"eta\":\"NA\"}",
+        "zero" => "{\"downloaded_bytes\":5,\"total_bytes\":0,\"total_bytes_estimate\":20,\"speed\":0,\"eta\":0}",
+        "null" => "{\"downloaded_bytes\":5,\"total_bytes\":null,\"total_bytes_estimate\":null}",
+        "negative" => "{\"downloaded_bytes\":-5,\"total_bytes\":10,\"speed\":-1,\"eta\":-1}",
+        "overflow" => "{\"downloaded_bytes\":5,\"total_bytes\":1e999}",
+        _ => "{\"status\":\"downloading\",\"downloaded_bytes\":5,\"total_bytes\":10,\"speed\":1024,\"eta\":1}"
+    };
+    if (args.ElementAtOrDefault(2) == "malformed")
+        foreach (var invalid in new[] { "broken", "[]", "null" }) Console.WriteLine("__VIDEOADER_PROGRESS__:" + invalid);
+    Console.WriteLine("__VIDEOADER_PROGRESS__:" + progress);
+    // Exceed pipe capacity so a stopped reader cannot hide behind a short fixture.
+    for (int i = 0; i < 256; i++) Console.WriteLine(new string('x', 1024));
+    Console.WriteLine("fixture log after progress");
+    await File.WriteAllBytesAsync(args[1], [1, 2, 3, 4]); Console.WriteLine("__VIDEOADER_OUTPUT__:" + System.Text.Json.JsonSerializer.Serialize(args[1])); return;
 }
 JsonNode? pendingExecute = null;
 while (await Console.In.ReadLineAsync() is string line)

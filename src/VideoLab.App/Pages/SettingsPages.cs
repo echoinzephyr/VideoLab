@@ -151,6 +151,7 @@ internal sealed partial class StudioPages
         cancelAll = form.Button("取消全部", () => { studio.Queue.CancelAll(); return Task.CompletedTask; });
         root.Children.Add(Row(cancelSelected, cancelAll, form.Button("复制日志", () => { MainWindow.Copy(string.Join(Environment.NewLine, studio.Queue.Logs)); return Task.CompletedTask; })));
         root.Children.Add(Card("处理队列", empty, list)); ShowItem();
-        root.Children.Add(Card("任务详情", details)); return root;
+        root.Children.Add(Card("任务详情", details));
+        root.Children.Add(new Expander { Header = "实时日志", HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new ListView { ItemsSource = studio.Queue.Logs, SelectionMode = ListViewSelectionMode.None, MaxHeight = 320 } }); return root;
     }
 }
