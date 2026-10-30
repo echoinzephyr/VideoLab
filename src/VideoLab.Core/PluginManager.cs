@@ -65,36 +65,46 @@ public sealed class PluginManager
     }
     public async Task<Dictionary<string, string>> CheckDependenciesAsync(InstalledPlugin plugin, JsonObject configuration, CancellationToken token)
     {
-        var results = new Dictionary<string, string>();
+        var checks = await InspectDependenciesAsync(plugin, configuration, token);
+        return checks.ToDictionary(p => p.Id, p => p.Message);
+    }
+    public async Task<IReadOnlyList<DependencyCheck>> InspectDependenciesAsync(InstalledPlugin plugin, JsonObject configuration, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var results = new List<DependencyCheck>();
         foreach (var dependency in plugin.Manifest.Dependencies)
         {
             var d = dependency!.AsObject(); var id = d["id"]!.GetValue<string>(); var value = DependencyValue(plugin, d, configuration);
-            if (string.IsNullOrWhiteSpace(value)) { results[id] = d["required"]?.GetValue<bool>() == false ? "未配置（可选）" : "尚未配置"; continue; }
+            var required = d["required"]?.GetValue<bool>() != false || (Store.IsOfficial(plugin) && id == "aria2" && settings.Flag("use_aria2"));
+            if (d["kind"]?.GetValue<string>() != "api")
+            {
+                var executable = d["executable"]?.GetValue<string>() ?? id;
+                var check = await DependencyChecker.ExecutableAsync(id, value, executable, required, token);
+                results.Add(check);
+                if (executable == "ffmpeg" && check.State != DependencyState.Optional && !plugin.Manifest.Dependencies.Any(n => n?["id"]?.GetValue<string>() == "ffprobe"))
+                    results.Add(await DependencyChecker.ExecutableAsync("ffprobe", ToolRunner.Ffprobe(value), "ffprobe", true, token));
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(value)) { results.Add(new(id, value, required ? DependencyState.Missing : DependencyState.Optional, required ? "尚未配置" : "未配置（可选）")); continue; }
             try
             {
-                if (d["kind"]?.GetValue<string>() == "api")
-                {
-                    if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) throw new InvalidDataException("API 地址无效。");
-                    using var budget = CancellationTokenSource.CreateLinkedTokenSource(token); budget.CancelAfter(TimeSpan.FromSeconds(5));
-                    using var response = await UpdateService.Http.GetAsync(value.TrimEnd('/') + "/openapi.json", budget.Token); response.EnsureSuccessStatusCode(); results[id] = "已连接";
-                }
-                else
-                {
-                    var result = await ToolRunner.RunAsync(value, [id is "ffmpeg" or "ffprobe" ? "-version" : "--version"], token, 10);
-                    results[id] = result.ExitCode == 0 ? "已就绪：" + result.Text.Split('\n')[0].Trim() : $"检测失败（{result.ExitCode}）";
-                }
+                if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) throw new InvalidDataException("API 地址无效。");
+                using var budget = CancellationTokenSource.CreateLinkedTokenSource(token); budget.CancelAfter(TimeSpan.FromSeconds(5));
+                using var response = await UpdateService.Http.GetAsync(value.TrimEnd('/') + "/openapi.json", budget.Token); response.EnsureSuccessStatusCode();
+                results.Add(new(id, value, DependencyState.Ready, "已连接"));
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-            catch (Exception error) { results[id] = "不可用：" + error.Message; }
+            catch (OperationCanceledException) { results.Add(new(id, value, DependencyState.TimedOut, "连接超时（5 秒）。")); }
+            catch (Exception error) { results.Add(new(id, value, DependencyState.Failed, "不可用：" + error.Message)); }
         }
         return results;
     }
     public string DependencyValue(InstalledPlugin plugin, JsonObject dependency, JsonObject configuration)
     {
         var id = dependency["id"]!.GetValue<string>(); var preference = dependency["preference"]?.GetValue<string>() ?? id;
-        var value = configuration[id]?.GetValue<string>() ?? "";
-        if (value.Length == 0 && Store.IsOfficial(plugin)) value = settings.Get(preference);
-        if (value.Length == 0) value = dependency["default"]?.GetValue<string>() ?? "";
+        var value = Store.IsOfficial(plugin) && dependency["preference"] is not null
+            ? settings.Get(preference).Trim() : (configuration[id]?.GetValue<string>() ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(value)) value = dependency["default"]?.GetValue<string>() ?? "";
         return dependency["kind"]?.GetValue<string>() == "api" || value.Length == 0 ? value : ToolRunner.Resolve(value, dependency["executable"]?.GetValue<string>() ?? id);
     }
     public async Task<WorkResult> ExecuteAsync(string id, JsonObject inputs, string directory, CancellationToken token, Action<string, JsonObject>? onEvent = null)
@@ -106,11 +116,11 @@ public sealed class PluginManager
             var plugin = Store.Installed[id]; await Store.VerifyAsync(id); var configuration = await ConfigurationAsync(plugin);
             foreach (var field in plugin.Manifest.Fields)
                 if (field!["required"]?.GetValue<bool>() == true && string.IsNullOrWhiteSpace(inputs[field["id"]!.GetValue<string>()]?.ToString())) throw new InvalidDataException($"请填写 {field["label"] ?? field["id"]}。");
-            var checks = await CheckDependenciesAsync(plugin, configuration, token);
-            var failures = checks.Where(p => !p.Value.StartsWith("已就绪") && p.Value != "已连接" && p.Value != "未配置（可选）").ToArray();
-            if (failures.Length > 0) throw new InvalidOperationException("请修复配置与依赖：" + string.Join("；", failures.Select(p => $"{p.Key}：{p.Value}")));
+            var checks = await InspectDependenciesAsync(plugin, configuration, token);
+            var failures = checks.Where(p => !p.CanRun).ToArray();
+            if (failures.Length > 0) throw new InvalidOperationException("请修复配置与依赖：" + DependencyChecker.Describe(failures));
             token.ThrowIfCancellationRequested();
-            var dependencies = new JsonObject(); foreach (var d in plugin.Manifest.Dependencies) dependencies[d!["id"]!.GetValue<string>()] = DependencyValue(plugin, d.AsObject(), configuration);
+            var dependencies = new JsonObject(); foreach (var d in plugin.Manifest.Dependencies) { var dependencyId = d!["id"]!.GetValue<string>(); dependencies[dependencyId] = checks.First(c => c.Id == dependencyId).Path; }
             var request = new JsonObject { ["inputs"] = inputs.DeepClone(), ["settings"] = configuration.DeepClone(), ["dependencies"] = dependencies, ["outputDirectory"] = directory };
             if (Store.IsOfficial(plugin) && UpdateService.CompareVersions(plugin.Manifest.Version, "1.1.0") < 0)
             { foreach (var p in inputs) request[p.Key] = p.Value?.DeepClone(); foreach (var p in configuration) request[p.Key] = p.Value?.DeepClone(); }

@@ -2,7 +2,17 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 
 if (args.FirstOrDefault() == "--child") { await Task.Delay(1000); await File.WriteAllTextAsync(args[1], "child survived"); return; }
-if (args.FirstOrDefault() is "--version" or "-version") { Console.WriteLine("VideoLab fixture 1.0"); return; }
+if (args.FirstOrDefault() is "--version" or "-version" or "-hide_banner")
+{
+    var modeFile = Path.Combine(AppContext.BaseDirectory, "dependency-mode.txt");
+    var mode = File.Exists(modeFile) ? (await File.ReadAllTextAsync(modeFile)).Trim() : "";
+    if (mode == "hang") { await Task.Delay(Timeout.Infinite); return; }
+    if (mode == "fail") { Console.Error.WriteLine("fixture cannot start"); Environment.ExitCode = 42; return; }
+    if (mode == "empty") return;
+    var name = Path.GetFileNameWithoutExtension(Environment.ProcessPath!);
+    if (args.FirstOrDefault() == "-hide_banner") { Console.WriteLine(mode == "no-encoders" ? "Encoders:\n V..... = Video\n A..... = Audio" : " V..... fixture Fixture encoder"); return; }
+    Console.WriteLine(name == "ffmpeg" ? "ffmpeg version " + (mode.Length == 0 || mode == "no-encoders" ? "N-123-gabc" : mode) : name == "ffprobe" ? "ffprobe version 7.1" : "VideoLab fixture 1.0"); return;
+}
 if (args.FirstOrDefault() == "--fixture-output")
 {
     await File.WriteAllBytesAsync(args[1], [1, 2, 3, 4]); Console.WriteLine("__VIDEOADER_PROGRESS__:{\"status\":\"downloading\",\"downloaded_bytes\":5,\"total_bytes\":10,\"speed\":1024,\"eta\":1}"); Console.WriteLine("__VIDEOADER_OUTPUT__:" + System.Text.Json.JsonSerializer.Serialize(args[1])); return;

@@ -28,7 +28,7 @@ public sealed class WorkItem : ObservableModel
     public long Bytes { get; private set; }
     public string Summary => $"{Name} · {Status} · {Bytes / 1024d:N1} KB · {Elapsed.TotalSeconds:N1}s" + (Errors.Count == 0 ? "" : $" · {string.Join("；", Errors)}");
     public WorkItem(string name, string input) { Name = name; Input = input; }
-    public void Report(string status, double? progress = null) { Status = status; if (progress is not null) Progress = Math.Clamp(progress.Value, 0, 1); Changed(nameof(Summary)); Changed(nameof(Progress)); }
+    public void Report(string status, double? progress = null) { Status = status; if (progress is not null) Progress = Math.Clamp(progress.Value, 0, 1); Changed(nameof(Status)); Changed(nameof(Summary)); Changed(nameof(Progress)); }
     public void Complete(WorkResult result, TimeSpan elapsed)
     {
         Paths = result.Paths; Errors = result.Errors; Elapsed = elapsed;

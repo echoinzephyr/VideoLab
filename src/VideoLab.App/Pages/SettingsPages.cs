@@ -12,41 +12,75 @@ internal sealed partial class StudioPages
 {
     private async Task<FrameworkElement> SettingsAsync()
     {
-        var form = Form(); var root = Page("设置", "配置媒体引擎、下载依赖、默认输出目录与应用外观。");
-        form.Path("ffmpeg_path", "FFmpeg 可执行文件或所在目录", studio.Settings.Get("ffmpeg_path"));
-        form.Path("download_path", "默认输出文件夹", studio.Settings.Get("download_path"), directory: true);
-        form.Path("yt_dlp_path", "yt-dlp 可执行文件", studio.Settings.Get("yt_dlp_path")); form.Path("aria2_path", "Aria2 可执行文件（可选）", studio.Settings.Get("aria2_path")); form.Toggle("use_aria2", "使用 Aria2 多线程下载", studio.Settings.Flag("use_aria2"));
-        form.Select("theme", "外观", ["system", "light", "dark"], studio.Settings.Get("theme", "system"));
-        var status = Note(""); root.Children.Add(Card("应用与工具", form.Panel, status));
-        async Task SaveAsync()
+        var form = Form(); var root = Page("设置", "按类别管理常规偏好、外部工具、硬件加速与本机数据。");
+        form.Path("download_path", "默认保存位置", studio.Settings.Get("download_path"), directory: true);
+        form.Select("theme", "应用外观", ["system", "light", "dark"], studio.Settings.Get("theme", "system"), labels: new Dictionary<string, string> { ["system"] = "跟随系统", ["light"] = "浅色", ["dark"] = "深色" });
+        form.Path("ffmpeg_path", "FFmpeg 可执行文件或目录", studio.Settings.Get("ffmpeg_path"));
+        form.Path("yt_dlp_path", "yt-dlp 可执行文件", studio.Settings.Get("yt_dlp_path"));
+        form.Path("aria2_path", "Aria2 可执行文件（可选）", studio.Settings.Get("aria2_path"));
+        form.Check("use_aria2", "使用 Aria2 多线程下载", studio.Settings.Flag("use_aria2"));
+        var general = new StackPanel { Spacing = 18 }; general.Children.Add(form.Take("download_path")); general.Children.Add(form.Take("theme"));
+        var tools = new StackPanel { Spacing = 16 }; tools.Children.Add(Note("可选择可执行文件、工具目录或含 bin 的解压目录。必需工具留空时从 PATH 查找。"));
+        foreach (var key in new[] { "ffmpeg_path", "yt_dlp_path", "aria2_path", "use_aria2" }) tools.Children.Add(form.Take(key));
+        var status = Note("更改后点击“保存设置”。"); var engineStatus = Note(studio.Engine.Summary); var engineDetail = Note(studio.Engine.Detail);
+        var diagnostic = new Expander { Header = "查看检测详情", HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = engineDetail };
+        void UpdateEngine() => window.DispatcherQueue.TryEnqueue(() => { engineStatus.Text = studio.Engine.State == EngineState.Ready ? "FFmpeg 与 ffprobe 已就绪。" : studio.Engine.Summary; engineDetail.Text = studio.Engine.Detail; });
+        engineStatus.Loaded += (_, _) => { studio.Engine.Changed += UpdateEngine; UpdateEngine(); }; engineStatus.Unloaded += (_, _) => studio.Engine.Changed -= UpdateEngine;
+        var revision = 0; form.Changed += () => { ++revision; status.Text = "设置已修改，保存后生效。"; };
+        async Task SaveAsync(bool verifyEngine = true)
         {
             var changed = studio.Settings.Get("ffmpeg_path") != form.Get("ffmpeg_path");
-            foreach (var p in form.Values()) if (p.Key is "gpu_acceleration" or "use_aria2") studio.Settings.Set(p.Key, p.Value == "true"); else studio.Settings.Set(p.Key, p.Value);
-            if (changed) { studio.Settings.Set("gpu_encoders", "[]"); studio.Settings.Set("gpu_acceleration", false); foreach (var family in new[] { "h264", "hevc", "av1", "vp9" }) studio.Settings.Set("gpu_" + family, ""); }
+            foreach (var pair in form.Values()) if (pair.Key == "use_aria2") studio.Settings.Set(pair.Key, pair.Value == "true"); else studio.Settings.Set(pair.Key, pair.Value);
             await studio.Settings.SaveAsync(); window.ApplyTheme(form.Get("theme")); status.Text = "设置已保存。";
+            if (changed && verifyEngine) await studio.Engine.VerifyAsync(studio.Ffmpeg);
         }
-        root.Children.Add(Row(form.Button("保存设置", SaveAsync, true), form.Button("保存并检测 FFmpeg", async () => { await SaveAsync(); var result = await ToolRunner.RunAsync(studio.Ffmpeg, ["-version"]); if (result.ExitCode != 0) throw new InvalidOperationException(result.Text); var ffprobe = Path.Combine(Path.GetDirectoryName(studio.Ffmpeg) ?? "", "ffprobe.exe"); var probeResult = await ToolRunner.RunAsync(ffprobe, ["-version"]); if (probeResult.ExitCode != 0) throw new InvalidOperationException(probeResult.Text); status.Text = result.Text.Split('\n')[0] + "\n" + probeResult.Text.Split('\n')[0]; })));
-        root.Children.Add(form.Button("安装 / 更新 yt-dlp", async () =>
+        root.Children.Add(Row(form.Button("保存设置", () => SaveAsync(), true))); root.Children.Add(status);
+        tools.Children.Add(Row(form.Button("保存并检测依赖", async () =>
+        {
+            var current = ++revision; await SaveAsync(false); engineStatus.Text = "正在检测依赖…";
+            var ytDlp = studio.Settings.Get("yt_dlp_path"); var aria2 = studio.Settings.Get("aria2_path"); var useAria2 = studio.Settings.Flag("use_aria2");
+            await studio.Engine.VerifyAsync(studio.Ffmpeg); var checks = studio.Engine.Results.ToList();
+            checks.Add(await DependencyChecker.ExecutableAsync("yt-dlp", ytDlp, "yt-dlp", true)); checks.Add(await DependencyChecker.ExecutableAsync("aria2", aria2, "aria2c", useAria2));
+            if (current != revision) return;
+            var failures = checks.Count(check => !check.CanRun); engineStatus.Text = failures == 0 ? "工具检测通过。" : $"有 {failures} 项依赖需要处理。";
+            engineDetail.Text = DependencyChecker.Describe(checks); diagnostic.IsExpanded = failures > 0;
+        }), form.Button("安装 / 更新 yt-dlp", async () =>
         {
             studio.Plugins.EnsureIdle("yt-dlp"); var path = await DependencyInstaller.YtDlpAsync(Path.Combine(studio.Settings.ExtensionsRoot, "tools"), CancellationToken.None);
-            form.Apply(new Dictionary<string, string> { ["yt_dlp_path"] = path }); studio.Settings.Set("yt_dlp_path", path); await studio.Settings.SaveAsync(); status.Text = "yt-dlp 已下载并校验：" + path;
-        }));
-        var gpu = Form(); gpu.Toggle("gpu_acceleration", "使用通过本机试编码的硬件编码器", studio.Settings.Flag("gpu_acceleration"));
-        foreach (var family in new[] { "h264", "hevc", "av1", "vp9" }) gpu.Select("gpu_" + family, family.ToUpperInvariant() + " 编码器（留空为 CPU）", new[] { "" }.Concat(UsableGpu().Where(e => e.StartsWith(family + "_"))), studio.Settings.Get("gpu_" + family));
-        var gpuStatus = Note(string.Join("、", UsableGpu()));
-        root.Children.Add(Card("硬件加速", gpu.Panel, gpuStatus, Row(form.Button("检测并试编码", async () =>
+            form.Apply(new Dictionary<string, string> { ["yt_dlp_path"] = path }); studio.Settings.Set("yt_dlp_path", path); await studio.Settings.SaveAsync(); status.Text = "yt-dlp 已安装并校验。";
+        })));
+        tools.Children.Add(engineStatus); tools.Children.Add(diagnostic);
+        var gpu = Form(); gpu.Check("gpu_acceleration", "使用检测通过的硬件编码器", studio.Settings.Flag("gpu_acceleration"));
+        var gpuChoices = new Dictionary<string, ComboBox>();
+        foreach (var family in new[] { "h264", "hevc", "av1", "vp9" })
         {
-            await SaveAsync(); await studio.Queue.AddAsync("硬件编码检测", studio.Ffmpeg, async (item, token) => { await studio.DetectHardwareAsync(token); return new([], []); });
-            gpuStatus.Text = "检测完成：" + string.Join("、", UsableGpu()); window.ShowMessage("硬件检测完成。重新打开设置可选择检测通过的编码器。");
-        }), form.Button("保存 GPU 选择", async () =>
+            var choices = new[] { "" }.Concat(UsableGpu().Where(encoder => encoder.StartsWith(family + "_"))).ToArray();
+            gpuChoices[family] = gpu.Select("gpu_" + family, family.ToUpperInvariant() + " 编码器", choices, studio.Settings.Get("gpu_" + family), labels: choices.ToDictionary(value => value, value => value.Length == 0 ? "使用 CPU" : value));
+        }
+        gpu.Arrange([["gpu_acceleration"], ["gpu_h264", "gpu_hevc"], ["gpu_av1", "gpu_vp9"]]);
+        var gpuStatus = Note(UsableGpu().Length == 0 ? "尚未检测可用编码器，请先检测并试编码。" : "可用编码器：" + string.Join("、", UsableGpu()));
+        var hardware = new StackPanel { Spacing = 16 }; hardware.Children.Add(Note("先检测本机能力，再选择通过试编码的编码器。留空或选择 CPU 时使用软件编码。")); hardware.Children.Add(gpu.Panel); hardware.Children.Add(gpuStatus);
+        hardware.Children.Add(Row(form.Button("检测并试编码", async () =>
         {
-            var selected = gpu.Values().Where(p => p.Key != "gpu_acceleration" && p.Value.Length > 0).ToArray();
-            if (selected.Any(p => !UsableGpu().Contains(p.Value))) throw new InvalidOperationException("编码器尚未通过本机检测。");
-            foreach (var p in selected) studio.Settings.Set(p.Key, p.Value);
-            foreach (var p in gpu.Values().Where(p => p.Key.StartsWith("gpu_") && p.Value.Length == 0)) studio.Settings.Set(p.Key, "");
-            studio.Settings.Set("gpu_acceleration", gpu.Flag("gpu_acceleration") && selected.Length > 0); await studio.Settings.SaveAsync(); window.ShowMessage("硬件编码选择已保存。");
-        }))));
-        root.Children.Add(Card("数据与兼容", Note("WinUI 版数据目录：" + studio.Settings.Root), Note(studio.Settings.MigrationWarning.Length == 0 ? "旧版设置、Cookie 与预设保留原文件，迁移副本供本版使用。" : studio.Settings.MigrationWarning), Row(form.Button("打开数据文件夹", () => { MainWindow.Open(studio.Settings.Root); return Task.CompletedTask; }), form.Button("重试旧版导入", async () => { studio.Settings.Set("legacy_imported_v1", false); await studio.Settings.LoadAsync(); window.ShowMessage(studio.Settings.MigrationWarning.Length == 0 ? "导入完成。" : studio.Settings.MigrationWarning); }))));
+            await SaveAsync(); var work = await studio.Queue.AddAsync("硬件编码检测", studio.Ffmpeg, async (_, token) => { await studio.DetectHardwareAsync(token); return new([], []); });
+            if (!work.Finished || work.Cancellation.IsCancellationRequested || work.Errors.Count > 0) { gpuStatus.Text = "检测未完成，请在任务详情中查看原因。"; return; }
+            foreach (var pair in gpuChoices)
+            {
+                pair.Value.Items.Clear(); foreach (var value in new[] { "" }.Concat(UsableGpu().Where(encoder => encoder.StartsWith(pair.Key + "_")))) pair.Value.Items.Add(new ComboBoxItem { Tag = value, Content = value.Length == 0 ? "使用 CPU" : value });
+                pair.Value.SelectedItem = pair.Value.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag?.ToString() == studio.Settings.Get("gpu_" + pair.Key)) ?? pair.Value.Items[0];
+            }
+            gpuStatus.Text = UsableGpu().Length == 0 ? "本机未检测到通过试编码的硬件编码器。" : "检测通过：" + string.Join("、", UsableGpu());
+        }), form.Button("保存硬件选择", async () =>
+        {
+            var selected = gpu.Values().Where(pair => pair.Key != "gpu_acceleration" && pair.Value.Length > 0).ToArray();
+            if (selected.Any(pair => !UsableGpu().Contains(pair.Value))) throw new InvalidOperationException("编码器尚未通过本机检测。");
+            foreach (var pair in gpu.Values().Where(pair => pair.Key != "gpu_acceleration")) studio.Settings.Set(pair.Key, pair.Value);
+            studio.Settings.Set("gpu_acceleration", gpu.Flag("gpu_acceleration") && selected.Length > 0); await studio.Settings.SaveAsync(); gpuStatus.Text = "硬件编码选择已保存。";
+        })));
+        var data = new StackPanel { Spacing = 16 }; data.Children.Add(Note("本机数据位置：" + studio.Settings.Root));
+        data.Children.Add(Note(studio.Settings.MigrationWarning.Length == 0 ? "旧版导入会保留来源文件，只迁移设置、Cookie 与预设。" : studio.Settings.MigrationWarning));
+        data.Children.Add(Row(form.Button("打开数据文件夹", () => { MainWindow.Open(studio.Settings.Root); return Task.CompletedTask; }), form.Button("重新导入旧版数据", async () => { studio.Settings.Set("legacy_imported_v1", false); await studio.Settings.LoadAsync(); var message = studio.Settings.MigrationWarning.Length == 0 ? "旧版数据导入完成。" : studio.Settings.MigrationWarning; await window.NavigateAsync("settings"); window.ShowMessage(message); })));
+        root.Children.Add(new Border { Style = (Style)Application.Current.Resources["CardStyle"], Child = PageTabs("settings-tabs", ("general", "常规", general), ("tools", "工具与依赖", tools), ("hardware", "硬件加速", hardware), ("data", "数据管理", data)) });
         await Task.CompletedTask; return root;
     }
     private FrameworkElement About()
@@ -67,22 +101,56 @@ internal sealed partial class StudioPages
     }
     private FrameworkElement Tasks()
     {
-        var root = Page("任务与结果", "页面切换不会中断任务。取消队列后保留已经完成的输出。"); var form = Form(); var list = new ListView { ItemsSource = studio.Queue.Items, DisplayMemberPath = "Summary", SelectionMode = ListViewSelectionMode.Single, MaxHeight = 420 };
+        var root = Page("任务与结果", "页面切换不会中断任务。选择一项任务可查看输出与失败原因。"); var form = Form(); var list = new ListView { ItemsSource = studio.Queue.Items, SelectionMode = ListViewSelectionMode.Single, MaxHeight = 420 };
+        list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load("""
+            <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+              <StackPanel Spacing="4" Margin="4,8">
+                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12"/>
+                <TextBlock Text="{Binding Input}" TextTrimming="CharacterEllipsis" MaxLines="1" Opacity="0.65" FontSize="12"/>
+              </StackPanel>
+            </DataTemplate>
+            """);
+        list.ItemContainerStyle = new Style { TargetType = typeof(ListViewItem) };
+        list.ItemContainerStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        var empty = Note("还没有任务。配置好素材或下载链接后，任务会显示在这里。");
+        Button? cancelSelected = null; Button? cancelAll = null;
         var details = new StackPanel { Spacing = 10 };
         void ShowItem()
         {
-            details.Children.Clear(); if (list.SelectedItem is not WorkItem item) return;
+            details.Children.Clear(); if (list.SelectedItem is not WorkItem item) { details.Children.Add(Note("从队列中选择任务，查看输出文件与诊断信息。")); return; }
             details.Children.Add(Note(item.Input));
+            var state = Note(""); state.SetBinding(TextBlock.TextProperty, new Binding { Source = item, Path = new PropertyPath("Status") }); details.Children.Add(state);
+            if (item.Finished) details.Children.Add(Note($"耗时 {item.Elapsed.TotalSeconds:N1} 秒 · 输出 {item.Bytes / 1024d:N1} KB"));
+            if (item.Paths.Count == 0 && item.Errors.Count == 0) details.Children.Add(Note(item.Finished ? "任务已结束，未返回输出文件。" : "任务进行中，完成后将在这里显示输出。"));
             foreach (var error in item.Errors) details.Children.Add(new InfoBar { IsOpen = true, IsClosable = false, Severity = InfoBarSeverity.Error, Message = error });
-            foreach (var file in item.Paths)
+            if (item.Paths.Count > 0)
             {
-                var output = new StackPanel { Spacing = 8 }; output.Children.Add(new TextBox { Text = file, IsReadOnly = true });
-                output.Children.Add(Row(form.Button("打开", () => { MainWindow.Open(file); return Task.CompletedTask; }), form.Button("文件夹", () => { MainWindow.Open(Path.GetDirectoryName(Path.GetFullPath(file))!); return Task.CompletedTask; }), form.Button("复制路径", () => { MainWindow.Copy(file); return Task.CompletedTask; }))); details.Children.Add(output);
+                var outputs = new ComboBox { Header = $"输出文件（{item.Paths.Count}）", HorizontalAlignment = HorizontalAlignment.Stretch };
+                foreach (var path in item.Paths) outputs.Items.Add(new ComboBoxItem { Content = Path.GetFileName(path).Length > 0 ? Path.GetFileName(path) : path, Tag = path });
+                outputs.SelectedIndex = 0;
+                string CurrentPath() => (outputs.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "";
+                var outputPath = new TextBox { Text = CurrentPath(), IsReadOnly = true };
+                outputs.SelectionChanged += (_, _) => outputPath.Text = CurrentPath();
+                details.Children.Add(outputs); details.Children.Add(outputPath);
+                details.Children.Add(Row(form.Button("打开文件", () => { MainWindow.Open(CurrentPath()); return Task.CompletedTask; }), form.Button("打开所在文件夹", () => { MainWindow.Open(Path.GetDirectoryName(Path.GetFullPath(CurrentPath()))!); return Task.CompletedTask; }), form.Button("复制路径", () => { MainWindow.Copy(CurrentPath()); return Task.CompletedTask; })));
             }
         }
-        WorkItem? selected = null; System.ComponentModel.PropertyChangedEventHandler changed = (_, _) => window.DispatcherQueue.TryEnqueue(ShowItem);
-        list.SelectionChanged += (_, _) => { if (selected is not null) selected.PropertyChanged -= changed; selected = list.SelectedItem as WorkItem; if (selected is not null) selected.PropertyChanged += changed; ShowItem(); };
-        root.Children.Add(Card("处理队列", list, Row(form.Button("取消所选", () => { if (list.SelectedItem is WorkItem item && !item.Finished) item.Cancellation.Cancel(); return Task.CompletedTask; }), form.Button("取消全部", () => { studio.Queue.CancelAll(); return Task.CompletedTask; }), form.Button("复制全部日志", () => { MainWindow.Copy(string.Join(Environment.NewLine, studio.Queue.Logs)); return Task.CompletedTask; }))));
-        root.Children.Add(Card("输出与诊断", details)); return root;
+        WorkItem? selected = null; System.ComponentModel.PropertyChangedEventHandler changed = (_, args) => { if (args.PropertyName is nameof(WorkItem.Finished) or nameof(WorkItem.Paths)) window.DispatcherQueue.TryEnqueue(ShowItem); };
+        list.SelectionChanged += (_, _) => { if (selected is not null) selected.PropertyChanged -= changed; selected = list.SelectedItem as WorkItem; if (selected is not null) selected.PropertyChanged += changed; ShowItem(); UpdateEmpty(); };
+        void UpdateEmpty()
+        {
+            list.Visibility = studio.Queue.Items.Count == 0 ? Visibility.Collapsed : Visibility.Visible; empty.Visibility = studio.Queue.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (cancelSelected is not null) cancelSelected.IsEnabled = list.SelectedItem is WorkItem { Finished: false };
+            if (cancelAll is not null) cancelAll.IsEnabled = studio.Queue.Busy;
+        }
+        Action updated = () => window.DispatcherQueue.TryEnqueue(UpdateEmpty);
+        root.Loaded += (_, _) => { studio.Queue.Updated += updated; UpdateEmpty(); };
+        root.Unloaded += (_, _) => { studio.Queue.Updated -= updated; if (selected is not null) selected.PropertyChanged -= changed; };
+        cancelSelected = form.Button("取消所选", () => { if (list.SelectedItem is WorkItem item && !item.Finished) item.Cancellation.Cancel(); return Task.CompletedTask; });
+        cancelAll = form.Button("取消全部", () => { studio.Queue.CancelAll(); return Task.CompletedTask; });
+        root.Children.Add(Row(cancelSelected, cancelAll, form.Button("复制日志", () => { MainWindow.Copy(string.Join(Environment.NewLine, studio.Queue.Logs)); return Task.CompletedTask; })));
+        root.Children.Add(Card("处理队列", empty, list)); ShowItem();
+        root.Children.Add(Card("任务详情", details)); return root;
     }
 }

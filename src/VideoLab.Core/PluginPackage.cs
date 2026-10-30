@@ -39,6 +39,17 @@ public sealed record PluginManifest(JsonObject Json)
                 if (type == "select" && field["options"] is not JsonArray) throw new InvalidDataException("插件选择字段缺少选项。");
             }
         }
+        var dependencyIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in value["dependencies"] as JsonArray ?? [])
+        {
+            if (node is not JsonObject dependency || dependency["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
+                string.IsNullOrWhiteSpace(id) || !Regex.IsMatch(id, "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$") || !dependencyIds.Add(id)) throw new InvalidDataException("依赖 ID 无效或重复。");
+            foreach (var key in new[] { "kind", "executable", "preference", "default", "name", "instructionsUrl" })
+                if (dependency[key] is not null && (dependency[key] is not JsonValue text || !text.TryGetValue<string>(out _))) throw new InvalidDataException($"依赖 {id} 的 {key} 必须为文本。");
+            if (dependency["kind"]?.GetValue<string>() is string kind && kind is not ("executable" or "api")) throw new InvalidDataException($"依赖 {id} 的类型不受支持。");
+            foreach (var key in new[] { "required", "automatic" })
+                if (dependency[key] is not null && (dependency[key] is not JsonValue flag || !flag.TryGetValue<bool>(out _))) throw new InvalidDataException($"依赖 {id} 的 {key} 必须为布尔值。");
+        }
         return new(value);
     }
 }

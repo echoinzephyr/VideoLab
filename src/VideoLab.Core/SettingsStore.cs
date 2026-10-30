@@ -12,10 +12,16 @@ public sealed class SettingsStore
     public string ExtensionsRoot => Path.Combine(Root, "extensions");
     public string CookieRoot => Path.Combine(Root, "cookies");
     public string MigrationWarning { get; private set; } = "";
+    public event Action<string>? Changed;
     public SettingsStore(string? root = null) => Root = root ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VideoLab", "WinUI3");
     public string Get(string key, string fallback = "") => Data[key] is JsonValue v && v.TryGetValue<string>(out var text) ? text : fallback;
     public bool Flag(string key, bool fallback = false) => Data[key] is JsonValue v && v.TryGetValue<bool>(out var value) ? value : fallback;
-    public void Set<T>(string key, T value) => Data[key] = JsonSerializer.SerializeToNode(value);
+    public void Set<T>(string key, T value)
+    {
+        var node = JsonSerializer.SerializeToNode(value);
+        if (JsonNode.DeepEquals(Data[key], node)) return;
+        Data[key] = node; Changed?.Invoke(key);
+    }
     public async Task LoadAsync(string? legacyRoot = null, string? legacyCookies = null)
     {
         Directory.CreateDirectory(Root);

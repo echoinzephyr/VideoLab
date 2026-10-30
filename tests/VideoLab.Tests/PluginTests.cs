@@ -40,6 +40,17 @@ public sealed class PluginTests : IAsyncLifetime
         return memory.ToArray();
     }
     private PluginStore Store() { var store = new PluginStore(Path.Combine(root, "plugins")); store.OfficialKeys.Add(PublicKey); return store; }
+    [Theory]
+    [InlineData("[null]")]
+    [InlineData("[{\"id\":\"tool\"},{\"id\":\"tool\"}]")]
+    [InlineData("[{\"id\":\"tool\",\"kind\":\"unknown\"}]")]
+    [InlineData("[{\"id\":\"tool\",\"required\":\"false\"}]")]
+    [InlineData("[{\"id\":\"tool\",\"executable\":3}]")]
+    public void InvalidDependencyManifestsAreRejected(string dependencies)
+    {
+        var manifest = JsonNode.Parse(Files("1.0.0")["manifest.json"])!.AsObject(); manifest["dependencies"] = JsonNode.Parse(dependencies);
+        Assert.Throws<InvalidDataException>(() => PluginManifest.Parse(manifest));
+    }
     [Fact] public async Task SignedInstallUpgradeRollbackPreservesSettings()
     {
         var store = Store(); await store.LoadAsync(); await store.InstallAsync(Package()); await store.SaveSettingsAsync("fixture.echo", new() { ["token"] = "fixture" });

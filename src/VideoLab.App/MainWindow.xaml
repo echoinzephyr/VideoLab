@@ -10,6 +10,16 @@
       </StackPanel>
     </Grid>
     <NavigationView x:Name="Navigation" Grid.Row="1" IsBackButtonVisible="Collapsed" IsSettingsVisible="False" PaneDisplayMode="Auto" OpenPaneLength="220" SelectionChanged="Navigation_SelectionChanged">
+      <NavigationView.PaneFooter>
+        <Border x:Name="EngineIndicator" Margin="12,8,12,12" Padding="12,10" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+          <Grid ColumnSpacing="8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Ellipse x:Name="EngineDot" Width="6" Height="6" Fill="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"/>
+            <TextBlock x:Name="EngineLabel" Grid.Column="1" Text="FFmpeg" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+            <TextBlock x:Name="EngineStatus" Grid.Column="2" Text="待检测" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+          </Grid>
+        </Border>
+      </NavigationView.PaneFooter>
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
         <InfoBar x:Name="Notice" IsOpen="False" IsClosable="True" Margin="24,0,24,8" />
